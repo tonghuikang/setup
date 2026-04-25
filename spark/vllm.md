@@ -116,6 +116,47 @@ c.chat.completions.create(
 )
 ```
 
+## Throughput
+
+Measured 2026-04-25 against `http://localhost:8000` with `openai/gpt-oss-20b`
+on the GB10, `max_model_len=131072`, `--gpu-memory-utilization 0.85`, no
+other vLLM flags (so `max_num_seqs` is the engine default). Harness is
+`spark/bench_vllm.py`:
+
+- `/v1/completions` with `prompt` as raw token-ID arrays (no tokenizer in
+  the loop, prompts/completions are gibberish — that's intentional).
+- Each request: random-token prefix of length L, output length sampled
+  uniformly from `[128, 1024]`, pinned via `min_tokens=max_tokens` and
+  `ignore_eos=True` so every request emits exactly the requested length.
+- Distinct per-request seed for the prefix tokens, so prefix caching is
+  defeated (real engine work, not cache hits).
+- Per-cell budget: ~131 072 (= 2¹⁷) generation tokens, with at least N
+  requests so the engine sees a full first batch even at long prefixes.
+- One warmup pass per prefix length before timing.
+- Bypasses the Cloudflare tunnel because long-prefix prefills (~96 k
+  tokens) easily blow Cloudflare's 100 s edge timeout.
+
+Cell value is **total generation throughput (output tokens per second)** =
+`sum(completion_tokens) / wall_time` across all requests in the cell, so
+queued completions count.
+
+| prefix tokens \ concurrency |   1 |   4 |  16 |  64 | 256 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+|     1 |  48 | 124 | 277 |  874 | 2666 |
+|  1024 |  47 | 122 | 295 |  746 | 1438 |
+| 16384 |  35 |  64 | 107 |  118 |    — |
+| 98304 |   — |   — |   — |    — |    — |
+
+> Numbers are from the previous 1 M-budget run. The 1 M cells finished but
+> took too long; the current 128 k-generation-budget run is in flight and
+> these will be replaced once it completes. Empty cells are pending. Engine
+> logs during the run show running batch peaking at 69–97 reqs (KV cache /
+> chunked-prefill bound), so concurrencies past that mostly extend the
+> queue rather than raising throughput.
+
+To re-run: `python3 spark/bench_vllm.py`. Tweak `PREFIX_LENGTHS`,
+`CONCURRENCIES`, `OUTPUT_TOKENS_MIN/MAX`, or `GEN_TOKENS_BUDGET` at the top.
+
 ## Switching models
 
 Edit `/etc/vllm/env`:
