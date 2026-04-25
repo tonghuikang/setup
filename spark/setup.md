@@ -169,6 +169,60 @@ sudo reboot
 - GNOME screen-lock disabled:
   - `org.gnome.desktop.screensaver lock-enabled = false`
   - `org.gnome.desktop.screensaver ubuntu-lock-on-suspend = false`
+- GNOME top bar clock shows seconds:
+  - `org.gnome.desktop.interface clock-show-seconds = true`
+
+## GNOME top bar — Vitals extension
+
+The **Vitals** GNOME Shell extension is installed for top-bar
+network up/download speed (plus CPU, memory, temperature).
+
+- UUID: `Vitals@CoreCoding.com`, version 75
+- Source: <https://extensions.gnome.org/extension/1460/vitals/>
+- Installed per-user at
+  `~/.local/share/gnome-shell/extensions/Vitals@CoreCoding.com`
+- Added to `org.gnome.shell enabled-extensions`
+
+Install steps used (no sudo, no browser):
+
+```sh
+# Resolve the download URL for the running shell version
+curl -sf "https://extensions.gnome.org/extension-info/?uuid=Vitals@CoreCoding.com&shell_version=$(gnome-shell --version | awk '{print $3}')" \
+  | python3 -c 'import sys,json,urllib.parse; d=json.load(sys.stdin); print("https://extensions.gnome.org"+d["download_url"])'
+
+# Download and install
+curl -sfL -o /tmp/vitals.zip "<url from above>"
+gnome-extensions install --force /tmp/vitals.zip
+
+# Add to enabled list (gnome-extensions enable can't see it until shell reloads,
+# so set the gsetting directly)
+gsettings set org.gnome.shell enabled-extensions \
+  "$(gsettings get org.gnome.shell enabled-extensions \
+     | python3 -c 'import sys,ast; xs=ast.literal_eval(sys.stdin.read()); xs.append("Vitals@CoreCoding.com"); print(xs)')"
+
+# Reload GNOME Shell to pick up the new extension (Xorg only — apps stay open)
+killall -HUP gnome-shell
+```
+
+On Wayland the in-place reload doesn't work; log out and back in instead.
+
+### Voltage / fan sensors show no data
+
+Vitals reads voltage and fan from `/sys/class/hwmon`, surfaced by
+`lm-sensors`. Checked on 2026-04-25:
+
+```sh
+for h in /sys/class/hwmon/hwmon*; do
+  echo "$(cat $h/name): $(ls $h | grep -Eo '^(fan|in|curr|power)[0-9]+_input' | sort -u | tr '\n' ' ')"
+done
+```
+
+All 10 hwmon devices on this box (`acpitz`, `nvme`, `r8169`, four `mlx5`,
+`mt7925_phy0`, two HID battery nodes) expose only `tempN_input` — no
+`fan*_input`, no `in*_input`, no `curr*` / `power*`. So even after
+`apt install lm-sensors && sensors-detect`, Vitals' fan/voltage panels
+would stay empty. Temperature panels work without `lm-sensors` (Vitals
+reads `tempN_input` directly).
 
 ## Software to install
 

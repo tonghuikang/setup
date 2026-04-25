@@ -45,7 +45,6 @@ so vLLM lives at its own subdomain.
 ```
 VLLM_MODEL=Qwen/Qwen2.5-0.5B-Instruct
 VLLM_EXTRA_ARGS=--max-model-len 8192 --gpu-memory-utilization 0.85
-VLLM_API_KEY=<64-hex-chars>
 HF_TOKEN=
 ```
 
@@ -53,16 +52,16 @@ After editing: `sudo systemctl restart vllm`.
 
 ## Auth
 
-vLLM enforces a Bearer token via its own `--api-key` flag. The key lives only
-in `/etc/vllm/env` (root, 0600) — not in the repo. Read it with:
+There is **no auth** on `vllm.huikang.dev`. The hostname is publicly
+resolvable and any client can hit `/v1/*` directly. Acceptable here because
+the box is a personal dev workstation and the hostname isn't advertised, but
+if abuse shows up the two natural gates are:
 
-```sh
-sudo grep ^VLLM_API_KEY /etc/vllm/env
-```
-
-There is **no Cloudflare Access policy** in front of `vllm.huikang.dev`; the
-API key is the only gate. If multi-user / browser-flow auth becomes a thing,
-add a Cloudflare Access self-hosted application on the hostname.
+- **vLLM `--api-key`** — re-add `--api-key "$VLLM_API_KEY"` to the
+  `ExecStart` line and put a key in `/etc/vllm/env`. Bearer-token, OpenAI
+  client-compatible.
+- **Cloudflare Access** self-hosted application on `vllm.huikang.dev` with
+  an email-domain policy. Browser-friendly; clients need a service token.
 
 ## Operations
 
@@ -85,13 +84,10 @@ restarts hit cache and start in seconds.
 
 ## Querying
 
-From this box (and any client with the API key):
+From any client, no auth:
 
 ```sh
-KEY=$(sudo grep ^VLLM_API_KEY /etc/vllm/env | cut -d= -f2)
-
 curl -s https://vllm.huikang.dev/v1/chat/completions \
-  -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Qwen/Qwen2.5-0.5B-Instruct",
@@ -99,11 +95,12 @@ curl -s https://vllm.huikang.dev/v1/chat/completions \
   }'
 ```
 
-OpenAI Python client:
+OpenAI Python client (the SDK requires a key string but the server ignores
+it):
 
 ```python
 from openai import OpenAI
-c = OpenAI(base_url="https://vllm.huikang.dev/v1", api_key="...")
+c = OpenAI(base_url="https://vllm.huikang.dev/v1", api_key="not-required")
 c.chat.completions.create(
     model="Qwen/Qwen2.5-0.5B-Instruct",
     messages=[{"role": "user", "content": "hi"}],
@@ -143,6 +140,16 @@ and any apps you're running.
   hasn't finished startup. Tail the logs.
 - `Permission denied` on `/srv/vllm/hf` from inside the container →
   the bind-mount target perms drifted; `sudo chown -R htong:htong /srv/vllm`.
+- `Starting to load model …` then silence; container alive, no further log
+  lines for many minutes → HuggingFace's Xet/CDN backend
+  (`cas-bridge.xethub.hf.co`) hung mid-stream and `huggingface_hub` left the
+  socket in `CLOSE_WAIT` instead of retrying. Workaround used here:
+  pre-download the safetensors blob directly with `curl -L --fail -C -` from
+  `https://huggingface.co/<repo>/resolve/main/model.safetensors` into
+  `/srv/vllm/hf/hub/models--<org>--<name>/blobs/<sha256>`, then
+  `ln -s ../../blobs/<sha256> snapshots/<commit>/model.safetensors`, then
+  restart vllm so it loads from cache. `curl -C -` is resumable; the chunky
+  HF Python client is not.
 
 ## Tear down
 
