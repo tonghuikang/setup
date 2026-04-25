@@ -43,12 +43,21 @@ so vLLM lives at its own subdomain.
 `/etc/vllm/env` is the only knob you need to touch in normal operation:
 
 ```
-VLLM_MODEL=Qwen/Qwen2.5-0.5B-Instruct
-VLLM_EXTRA_ARGS=--max-model-len 8192 --gpu-memory-utilization 0.85
+VLLM_MODEL=openai/gpt-oss-20b
+VLLM_EXTRA_ARGS=--gpu-memory-utilization 0.85
 HF_TOKEN=
 ```
 
 After editing: `sudo systemctl restart vllm`.
+
+For ad-hoc debugging, `spark/serve-vllm.sh` runs the same docker invocation
+in the foreground. It auto-stops `vllm.service` (via `sudo`) so port 8000 is
+free:
+
+```sh
+./spark/serve-vllm.sh                                  # reads /etc/vllm/env
+VLLM_MODEL=openai/gpt-oss-20b ./spark/serve-vllm.sh    # override
+```
 
 ## Auth
 
@@ -66,10 +75,10 @@ if abuse shows up the two natural gates are:
 ## Operations
 
 ```sh
-# Status / logs
-sudo systemctl status vllm
-sudo journalctl -u vllm -f
-sudo docker logs -f vllm
+# Status / logs (no sudo needed — htong is in adm + docker groups)
+systemctl status vllm
+journalctl -u vllm -f
+docker logs -f vllm
 
 # Restart after env change
 sudo systemctl restart vllm
@@ -90,7 +99,7 @@ From any client, no auth:
 curl -s https://vllm.huikang.dev/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model": "openai/gpt-oss-20b",
     "messages": [{"role":"user","content":"Say hello in one word."}]
   }'
 ```
@@ -102,7 +111,7 @@ it):
 from openai import OpenAI
 c = OpenAI(base_url="https://vllm.huikang.dev/v1", api_key="not-required")
 c.chat.completions.create(
-    model="Qwen/Qwen2.5-0.5B-Instruct",
+    model="openai/gpt-oss-20b",
     messages=[{"role": "user", "content": "hi"}],
 )
 ```
@@ -112,18 +121,20 @@ c.chat.completions.create(
 Edit `/etc/vllm/env`:
 
 ```
-VLLM_MODEL=openai/gpt-oss-120b
+VLLM_MODEL=openai/gpt-oss-20b
 ```
 
-then `sudo systemctl restart vllm`. The first restart will pull ~60 GB of
+then `sudo systemctl restart vllm`. The first restart will pull ~13 GB of
 MXFP4 weights into `/srv/vllm/hf`. Watch with `journalctl -u vllm -f`; once
 the server logs `Application startup complete`, it's ready.
 
 Tested models on this box:
 
 - `Qwen/Qwen2.5-0.5B-Instruct` — smoke-test, ~1 GB, starts in ~30 s.
-- `openai/gpt-oss-120b` — production target, MoE 117B / 5.1B active, MXFP4
-  native, fits in the 128 GB unified memory.
+- `openai/gpt-oss-20b` — production target, MoE 21B / 3.6B active, MXFP4
+  native, ~13 GB, comfortably fits in the 128 GB unified memory.
+- `openai/gpt-oss-120b` — larger sibling, MoE 117B / 5.1B active, MXFP4
+  native, ~60 GB; still fits but leaves less headroom for the desktop.
 
 For larger non-MoE models, check `nvidia-smi`'s memory column — the GB10's
 unified memory is shared with the desktop session, so leave headroom for X
