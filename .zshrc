@@ -77,7 +77,7 @@ alias pyt="python -m trace --ignore-dir=\$(python -c 'import sys ; print(\":\".j
 # competitive programming, require location with scripts
 alias cx="./run_cpp.sh"
 alias px="./run_py.sh"
-pxa() { autoflake --in-place --remove-all-unused-imports "$1".py }
+pxa() { autoflake --in-place --remove-all-unused-imports "$1".py; }
 alias gg="git add . && git commit -m "dump""
 alias gen="python3 sample_gen.py"
 alias cfgen="python3 sample_crawl_cf.py"

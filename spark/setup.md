@@ -197,6 +197,39 @@ instructions and alternative methods are at
 Verify with `claude --version`. On first launch, `claude` prompts an
 interactive login.
 
+## Shell
+
+Default shell is bash (`/bin/bash`); zsh is not installed. The repo keeps a
+shared aliases/functions file at the repo root [`../.zshrc`](../.zshrc) that
+both the macOS (zsh) and Spark (bash) setups source — most aliases are
+shell-agnostic, the few macOS-specific ones (`open`, `caffeinate`, `code`)
+are harmless when sourced under bash and just won't be useful here.
+
+`~/.bashrc` ends with:
+
+```bash
+if [ -f "$HOME/Desktop/macOS_setup/.zshrc" ]; then
+    . "$HOME/Desktop/macOS_setup/.zshrc"
+fi
+```
+
+So edits to the repo's `.zshrc` apply to new shells on this box without any
+further action.
+
+## Remote access
+
+SSH-from-anywhere is set up via a Cloudflare Tunnel — the public hostname
+`spark.huikang.dev` proxies to `localhost:22` on this box. Full details
+(architecture, server config, client setup, debugging) live in
+[`ssh.md`](./ssh.md).
+
+## Inference
+
+A vLLM OpenAI-compatible server runs as a systemd-managed Docker container
+on `127.0.0.1:8000` and is exposed via the same Cloudflare Tunnel at
+`https://vllm.huikang.dev`. Setup, model switching, auth, and ops live in
+[`vllm.md`](./vllm.md).
+
 ## Useful one-liners for this box
 
 ```sh

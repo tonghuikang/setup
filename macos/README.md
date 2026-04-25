@@ -88,7 +88,7 @@ brew install --cask iterm2
 brew install zsh
 ```
 
-Set up `~/.zshrc` - this is mine [.zshrc](./.zshrc)
+Set up `~/.zshrc` - this is mine [.zshrc](../.zshrc) (shared with the Spark/Linux setup)
 
 ```
 brew install wget htop
