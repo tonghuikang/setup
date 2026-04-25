@@ -27,6 +27,22 @@ Notes on the state of this NVIDIA DGX Spark machine as of 2026-04-24.
   - Native: 1920×1080 @ 60 Hz
   - Has built-in stereo speakers, audible via HDMI
 
+#### Reducing resolution (when a higher-res monitor is connected)
+
+If a 4K-capable monitor is plugged in and the desktop is rendering at
+3840×2160 (text too small, GPU under unnecessary load), drop it to 1080p
+at runtime via `xrandr`:
+
+```sh
+DISPLAY=:0 xrandr --output HDMI-0 --mode 1920x1080 --rate 60
+```
+
+The X output name on this box is `HDMI-0` under Xorg/NVIDIA (DRM connector
+is `HDMI-A-1`). 1920×1080 is a clean 2× downscale of 4K. List available
+modes with `DISPLAY=:0 xrandr`. This is a runtime change only; to make it
+persist across logins, set the resolution from GNOME's *Settings → Displays*
+panel (which writes `~/.config/monitors.xml`).
+
 ### Audio
 
 - Output device: HDMI stereo via the monitor's built-in speakers
@@ -250,6 +266,29 @@ instructions and alternative methods are at
 
 Verify with `claude --version`. On first launch, `claude` prompts an
 interactive login.
+
+#### Font fix for Claude Code glyph rendering
+
+Claude Code's TUI uses Unicode symbols like `⏵` (U+23F5,
+"Black Medium Right-Pointing Triangle") in its status line — e.g. the
+`⏵⏵ auto mode on` indicator. These live in the *Miscellaneous Technical*
+block, which `DejaVu Sans Mono` and `Noto Mono` (the only mono fonts
+shipped on this box by default) don't cover, so they render as tofu /
+hex codepoint boxes. Tracked upstream as
+[anthropics/claude-code#24102](https://github.com/anthropics/claude-code/issues/24102).
+
+Workaround installed: `fonts-symbola`, which fontconfig now uses as the
+fallback for these glyphs.
+
+```sh
+sudo apt install fonts-symbola
+fc-cache -f
+# verify U+23F5 has a covering font:
+fc-match -s ':charset=23F5' | head -1   # → Symbola
+```
+
+Restart any open terminals after install to pick up the new fontconfig
+cache.
 
 ## Shell
 
