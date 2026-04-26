@@ -31,6 +31,7 @@ fi
 : "${VLLM_MODEL:?set VLLM_MODEL or populate $ENV_FILE}"
 : "${VLLM_EXTRA_ARGS:=--gpu-memory-utilization 0.75}"
 : "${HF_TOKEN:=}"
+: "${VLLM_API_KEY:=}"
 : "${VLLM_IMAGE:=nvcr.io/nvidia/vllm:26.03.post1-py3}"
 : "${VLLM_PORT:=8000}"
 : "${VLLM_BIND:=127.0.0.1}"
@@ -46,6 +47,7 @@ exec docker run --rm --name vllm \
   -v "${VLLM_HF_CACHE}:/root/.cache/huggingface" \
   -e HF_HOME=/root/.cache/huggingface \
   -e HF_TOKEN="$HF_TOKEN" \
+  -e VLLM_API_KEY="$VLLM_API_KEY" \
   "$VLLM_IMAGE" \
   vllm serve "$VLLM_MODEL" \
   --host 0.0.0.0 --port 8000 \

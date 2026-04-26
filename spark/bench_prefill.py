@@ -8,10 +8,11 @@ negligible against any non-trivial prefill.
 
 Run after the main benchmark; both can't share GPU time.
 """
-import json, time, urllib.request, random, sys
+import json, time, urllib.request, random, sys, os
 
 URL = "http://localhost:8000/v1/completions"
 MODEL = "openai/gpt-oss-20b"
+API_KEY = os.environ.get("VLLM_API_KEY", "")
 
 PREFIX_LENGTHS = [1, 4096, 32768, 98304]
 TOK_LO, TOK_HI = 1000, 100_000
@@ -31,11 +32,10 @@ def probe(prompt_ids):
         "ignore_eos": True,
         "temperature": 0.0,
     }).encode()
-    req = urllib.request.Request(
-        URL,
-        data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "curl/8.5.0"},
-    )
+    headers = {"Content-Type": "application/json", "User-Agent": "curl/8.5.0"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    req = urllib.request.Request(URL, data=body, headers=headers)
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=600) as r:
         json.loads(r.read())

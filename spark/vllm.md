@@ -46,6 +46,7 @@ so vLLM lives at its own subdomain.
 VLLM_MODEL=openai/gpt-oss-20b
 VLLM_EXTRA_ARGS=--gpu-memory-utilization 0.75
 HF_TOKEN=
+VLLM_API_KEY=<bearer token clients must send>
 ```
 
 After editing: `sudo systemctl restart vllm`.
@@ -61,16 +62,30 @@ VLLM_MODEL=openai/gpt-oss-20b ./spark/serve-vllm.sh    # override
 
 ## Auth
 
-There is **no auth** on `vllm.huikang.dev`. The hostname is publicly
-resolvable and any client can hit `/v1/*` directly. Acceptable here because
-the box is a personal dev workstation and the hostname isn't advertised, but
-if abuse shows up the two natural gates are:
+Bearer-token auth is enabled. The key lives in `/etc/vllm/env` as
+`VLLM_API_KEY` and the systemd unit forwards it into the container via
+`-e VLLM_API_KEY`; vLLM's middleware picks it up automatically (no
+`--api-key` flag needed) and gates **every path under `/v1/*`**. Requests
+without a matching `Authorization: Bearer <key>` header get `401
+Unauthorized`.
 
-- **vLLM `--api-key`** — re-add `--api-key "$VLLM_API_KEY"` to the
-  `ExecStart` line and put a key in `/etc/vllm/env`. Bearer-token, OpenAI
-  client-compatible.
-- **Cloudflare Access** self-hosted application on `vllm.huikang.dev` with
-  an email-domain policy. Browser-friendly; clients need a service token.
+What stays open without a token (per vLLM's `AuthenticationMiddleware`):
+
+- `OPTIONS` preflight on any path
+- Anything not under `/v1` — `/health`, `/version`, `/ping`, `/metrics`,
+  `/docs`, `/openapi.json`
+
+So `/v1/models` is **not** publicly enumerable; clients must already know
+the model name (or have the key).
+
+To rotate the key: edit `VLLM_API_KEY` in `/etc/vllm/env` and
+`sudo systemctl restart vllm`. To disable auth, blank the value or remove
+the line entirely.
+
+If browser-based access matters more than CLI ergonomics, **Cloudflare
+Access** in front of `vllm.huikang.dev` (email-domain policy + service
+tokens for non-browser clients) is a drop-in replacement for the bearer
+token at the edge.
 
 ## Operations
 
@@ -93,10 +108,11 @@ restarts hit cache and start in seconds.
 
 ## Querying
 
-From any client, no auth:
+Set `VLLM_API_KEY` in your shell to the value from `/etc/vllm/env`, then:
 
 ```sh
 curl -s https://vllm.huikang.dev/v1/chat/completions \
+  -H "Authorization: Bearer $VLLM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "openai/gpt-oss-20b",
@@ -104,12 +120,13 @@ curl -s https://vllm.huikang.dev/v1/chat/completions \
   }'
 ```
 
-OpenAI Python client (the SDK requires a key string but the server ignores
-it):
+OpenAI Python client:
 
 ```python
+import os
 from openai import OpenAI
-c = OpenAI(base_url="https://vllm.huikang.dev/v1", api_key="not-required")
+c = OpenAI(base_url="https://vllm.huikang.dev/v1",
+           api_key=os.environ["VLLM_API_KEY"])
 c.chat.completions.create(
     model="openai/gpt-oss-20b",
     messages=[{"role": "user", "content": "hi"}],
@@ -174,8 +191,11 @@ super-linear.
 
 > Run in flight; cells fill in as they complete.
 
-To re-run: `python3 spark/bench_vllm.py`. Tweak `PREFIX_LENGTHS`,
-`CONCURRENCIES`, or `OUTPUT_TOKENS_MIN/MAX` at the top.
+To re-run: `VLLM_API_KEY=$(sudo grep ^VLLM_API_KEY /etc/vllm/env | cut -d= -f2)
+python3 spark/bench_vllm.py`. The bench scripts read `VLLM_API_KEY` from
+the environment and add the bearer header on every request; without it
+they'll all 401. Tweak `PREFIX_LENGTHS`, `CONCURRENCIES`, or
+`OUTPUT_TOKENS_MIN/MAX` at the top.
 
 ## Switching models
 

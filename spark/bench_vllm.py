@@ -19,7 +19,7 @@ content. Prompts/completions are gibberish — only throughput matters.
 A single warmup pass (8 concurrent, 64-token shared prefix, 16 output
 tokens) runs once at the start, before any timed cell.
 """
-import json, time, urllib.request, concurrent.futures as cf, random, sys, threading
+import json, time, urllib.request, concurrent.futures as cf, random, sys, threading, os
 
 # Default thread stack is 8 MB; with 1024 threads that's 8 GB of virtual
 # memory, enough to draw OOM-killer attention on a box where vLLM owns most
@@ -29,6 +29,7 @@ threading.stack_size(512 * 1024)
 
 URL = "http://localhost:8000/v1/completions"   # bypass Cloudflare's 100s edge timeout
 MODEL = "openai/gpt-oss-20b"
+API_KEY = os.environ.get("VLLM_API_KEY", "")
 
 OUTPUT_TOKENS_MIN = 64
 OUTPUT_TOKENS_MAX = 1024
@@ -59,11 +60,10 @@ def one(prompt_ids, output_tokens):
         "stop": [],
     }).encode()
     t0 = time.perf_counter()
-    req = urllib.request.Request(
-        URL,
-        data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "curl/8.5.0"},
-    )
+    headers = {"Content-Type": "application/json", "User-Agent": "curl/8.5.0"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    req = urllib.request.Request(URL, data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=600) as r:
         data = json.loads(r.read())
     dt = time.perf_counter() - t0
