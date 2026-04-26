@@ -13,7 +13,7 @@ import json, time, urllib.request, random, sys
 URL = "http://localhost:8000/v1/completions"
 MODEL = "openai/gpt-oss-20b"
 
-PREFIX_LENGTHS = [1, 1024, 16384, 98304]
+PREFIX_LENGTHS = [1, 4096, 32768, 98304]
 TOK_LO, TOK_HI = 1000, 100_000
 
 

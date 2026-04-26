@@ -149,18 +149,20 @@ Harness is `spark/bench_vllm.py`:
 Cell value is **total generation throughput (output tokens per second)** =
 `sum(completion_tokens) / wall_time` across all N requests in the cell.
 
-| prefix tokens |   1 |   4 |  16 |  64 | 256 | prefill (s) |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-|     1 |  47 | 134 | 336 | 740 | 2145 | ~0   |
-|  1024 |  45 | 103 | 331 | 762 | 2282 | ~0.1 |
-| 16384 |  37 | 116 | 255 | 576 | 1302 | ~1.6 |
-| 98304 |  11 |  25 |  78 | 195 | 381 | ~10  |
+| prefix tokens |   1 |   4 |  16 |  64 | 256 | 1024 | prefill (s) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+|     1 |  48 | 137 | 318 | 734 | 2332 | 2807 |  0.03 |
+|  4096 |  44 | 105 | 335 | 957 | 2215 | 2436 |  0.54 |
+| 32768 |  31 |  96 | 223 | 459 |  964 | 1133 |  7.82 |
+| 98304 |  12 |  27 |  87 | 222 |  411 |   — | 49.16 |
 
-Prefill column is approximate, derived from the engine's reported peak
-prompt throughput (~10 k tok/s during chunked-prefill steps, with
-`max_num_batched_tokens=2048`). For a precise number, run
-`spark/bench_prefill.py` after the bench (sends one request with
-`max_tokens=1` per prefix length and reports wall time).
+Prefill column comes from `spark/bench_prefill.py`: one request per prefix
+length with `max_tokens=1` and a fresh random prefix (cold prefix cache).
+Wall time is dominated by prefill (one decode step is tens of ms,
+negligible). Note 96 k prefill is ~54 s, far above the naive
+"length / peak-prompt-throughput" estimate — chunked-prefill peaks of
+~10 k tok/s aren't sustained as context grows because attention cost is
+super-linear.
 
 > Run in flight; cells fill in as they complete.
 

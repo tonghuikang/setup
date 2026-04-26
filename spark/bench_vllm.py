@@ -24,11 +24,12 @@ import json, time, urllib.request, concurrent.futures as cf, random, sys
 URL = "http://localhost:8000/v1/completions"   # bypass Cloudflare's 100s edge timeout
 MODEL = "openai/gpt-oss-20b"
 
-OUTPUT_TOKENS_MIN = 128
+OUTPUT_TOKENS_MIN = 64
 OUTPUT_TOKENS_MAX = 1024
+GEN_BUDGET_PER_CELL = 64 * 1024   # cap on total output tokens per cell
 
-PREFIX_LENGTHS = [1, 1024, 16384, 98304]
-CONCURRENCIES = [1, 4, 16, 64, 256]
+PREFIX_LENGTHS = [1, 4096, 32768, 98304]
+CONCURRENCIES = [1, 4, 16, 64, 256, 1024]
 
 # gpt-oss uses the o200k_harmony tokenizer (~201k vocab). We pick from a
 # middle range to dodge specials and reserved IDs. Using a small range is
@@ -71,12 +72,18 @@ def plan_requests(N, prefix_tokens, seed_base):
     This lets vLLM's prefix cache absorb the prefill cost after the first
     request — appropriate for shared-context workloads (long system prompt,
     shared document, …).
+
+    Per-request output length is uniform in [MIN, max_per_req] where
+    max_per_req = min(OUTPUT_TOKENS_MAX, GEN_BUDGET_PER_CELL // N), so the
+    sum of generation tokens per cell is bounded by GEN_BUDGET_PER_CELL.
     """
     out_rng = random.Random(seed_base)
     shared_prefix = random_token_ids(prefix_tokens, seed=seed_base)
+    max_per_req = min(OUTPUT_TOKENS_MAX, max(1, GEN_BUDGET_PER_CELL // N))
+    min_per_req = min(OUTPUT_TOKENS_MIN, max_per_req)
     plan = []
     for _ in range(N):
-        out_tok = out_rng.randint(OUTPUT_TOKENS_MIN, OUTPUT_TOKENS_MAX)
+        out_tok = out_rng.randint(min_per_req, max_per_req)
         plan.append((shared_prefix, out_tok))
     return plan
 
