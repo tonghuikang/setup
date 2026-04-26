@@ -19,14 +19,20 @@ content. Prompts/completions are gibberish — only throughput matters.
 A single warmup pass (8 concurrent, 64-token shared prefix, 16 output
 tokens) runs once at the start, before any timed cell.
 """
-import json, time, urllib.request, concurrent.futures as cf, random, sys
+import json, time, urllib.request, concurrent.futures as cf, random, sys, threading
+
+# Default thread stack is 8 MB; with 1024 threads that's 8 GB of virtual
+# memory, enough to draw OOM-killer attention on a box where vLLM owns most
+# of the unified memory. 512 KB is plenty for a thread that just does a
+# urllib.urlopen.
+threading.stack_size(512 * 1024)
 
 URL = "http://localhost:8000/v1/completions"   # bypass Cloudflare's 100s edge timeout
 MODEL = "openai/gpt-oss-20b"
 
 OUTPUT_TOKENS_MIN = 64
 OUTPUT_TOKENS_MAX = 1024
-GEN_BUDGET_PER_CELL = 64 * 1024   # cap on total output tokens per cell
+GEN_BUDGET_PER_CELL = 128 * 1024   # 131 072 total output tokens per cell
 
 PREFIX_LENGTHS = [1, 4096, 32768, 98304]
 CONCURRENCIES = [1, 4, 16, 64, 256, 1024]
@@ -73,19 +79,15 @@ def plan_requests(N, prefix_tokens, seed_base):
     request — appropriate for shared-context workloads (long system prompt,
     shared document, …).
 
-    Per-request output length is uniform in [MIN, max_per_req] where
-    max_per_req = min(OUTPUT_TOKENS_MAX, GEN_BUDGET_PER_CELL // N), so the
-    sum of generation tokens per cell is bounded by GEN_BUDGET_PER_CELL.
+    Each request asks for exactly the same output length:
+        output_tokens = clamp(GEN_BUDGET_PER_CELL // N, MIN, MAX).
+    So the total generation per cell is GEN_BUDGET_PER_CELL split evenly
+    among the N requests, clipped to [MIN, MAX] per request when N is
+    extreme.
     """
-    out_rng = random.Random(seed_base)
     shared_prefix = random_token_ids(prefix_tokens, seed=seed_base)
-    max_per_req = min(OUTPUT_TOKENS_MAX, max(1, GEN_BUDGET_PER_CELL // N))
-    min_per_req = min(OUTPUT_TOKENS_MIN, max_per_req)
-    plan = []
-    for _ in range(N):
-        out_tok = out_rng.randint(min_per_req, max_per_req)
-        plan.append((shared_prefix, out_tok))
-    return plan
+    out_tok = max(OUTPUT_TOKENS_MIN, min(OUTPUT_TOKENS_MAX, GEN_BUDGET_PER_CELL // N))
+    return [(shared_prefix, out_tok) for _ in range(N)]
 
 
 def sweep_cell(N, prefix_tokens, seed_base):

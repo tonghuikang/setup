@@ -29,7 +29,7 @@ elif [[ -e "$ENV_FILE" ]]; then
 fi
 
 : "${VLLM_MODEL:?set VLLM_MODEL or populate $ENV_FILE}"
-: "${VLLM_EXTRA_ARGS:=--gpu-memory-utilization 0.85}"
+: "${VLLM_EXTRA_ARGS:=--gpu-memory-utilization 0.75}"
 : "${HF_TOKEN:=}"
 : "${VLLM_IMAGE:=nvcr.io/nvidia/vllm:26.03.post1-py3}"
 : "${VLLM_PORT:=8000}"

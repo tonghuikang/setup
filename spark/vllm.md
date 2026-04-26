@@ -44,7 +44,7 @@ so vLLM lives at its own subdomain.
 
 ```
 VLLM_MODEL=openai/gpt-oss-20b
-VLLM_EXTRA_ARGS=--gpu-memory-utilization 0.85
+VLLM_EXTRA_ARGS=--gpu-memory-utilization 0.75
 HF_TOKEN=
 ```
 
@@ -124,7 +124,11 @@ unified memory, aarch64) running the NGC container
 that has working sm_121 kernels). Model `openai/gpt-oss-20b`
 (MoE 21B / 3.6B active, MXFP4 native, ~13 GB on disk) loaded from the local
 HF cache at `/srv/vllm/hf`. vLLM args: `--max-model-len 131072` (the
-model's native context — no truncation), `--gpu-memory-utilization 0.85`,
+model's native context — no truncation), `--gpu-memory-utilization 0.75`
+(was 0.85 — leaving more headroom outside vLLM's reservation, since on a
+unified-memory box like Spark the reservation comes out of system RAM and
+0.85 left the host with only ~10 GB free, enough to OOM under a 1024-way
+burst),
 no other flags, so `max_num_seqs` etc. fall back to engine defaults.
 Service runs as the `vllm.service` systemd unit; the benchmark hits
 `http://localhost:8000/v1/completions` directly to avoid the Cloudflare
@@ -140,12 +144,13 @@ Harness is `spark/bench_vllm.py`:
   throughput at concurrency N once the shared prefill is amortized
   (representative of shared-context workloads — long system prompt or
   shared document).
-- Output length sampled per-request uniformly from
-  `[64, min(1024, 65 536/N)]`, pinned via `min_tokens=max_tokens` and
-  `ignore_eos=True`, so every request emits exactly the requested length.
-  The per-cell ceiling on total output is 65 536 tokens
-  (`GEN_BUDGET_PER_CELL`); high-N cells get clamped down to keep cells
-  bounded, low-N cells use the full 64–1024 range.
+- Per-request output length is deterministic and identical for all N
+  requests in a cell: `output_tokens = clamp(131 072 / N, 64, 1024)`.
+  Pinned via `min_tokens=max_tokens` and `ignore_eos=True`, so the engine
+  emits exactly that many tokens regardless of model behavior. Cells where
+  N ≤ 128 hit the 1024 ceiling; cells with N ≥ 2048 would hit the 64
+  floor; in between the budget splits evenly. Total generation per cell is
+  131 072 tokens (= `GEN_BUDGET_PER_CELL`).
 - One warmup pass at the start of the run (8 concurrent, 64-token shared
   prefix, 16-token output) — settles engine state, not a per-cell warmup.
 
@@ -157,7 +162,7 @@ Cell value is **total generation throughput (output tokens per second)** =
 |     1 |  48 | 137 | 318 | 734 | 2332 | 2807 |  0.03 |
 |  4096 |  44 | 105 | 335 | 957 | 2215 | 2436 |  0.54 |
 | 32768 |  31 |  96 | 223 | 459 |  964 | 1133 |  7.82 |
-| 98304 |  12 |  27 |  87 | 222 |  411 |   — | 49.16 |
+| 98304 |  12 |  27 |  87 | 222 |  539 |  428 | 49.16 |
 
 Prefill column comes from `spark/bench_prefill.py`: one request per prefix
 length with `max_tokens=1` and a fresh random prefix (cold prefix cache).
