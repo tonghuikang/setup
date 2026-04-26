@@ -255,6 +255,21 @@ sudo snap install telegram-desktop
 official `.tar.xz` from <https://desktop.telegram.org/> if you'd rather
 avoid snap.)
 
+### Web browser (Chromium, not Chrome)
+
+Google does not publish Google Chrome for Linux ARM64 — the only Linux
+builds Google ships are amd64. The closest equivalent on this box is
+**Chromium**, the open-source upstream Chrome is built from. Install via
+snap (the Ubuntu archive `chromium-browser` package is itself a snap
+shim, so this is the supported path):
+
+```sh
+sudo snap install chromium
+```
+
+Firefox is also available (`sudo snap install firefox`) and ships
+preinstalled on most Ubuntu desktop images.
+
 ### Claude Code
 
 Anthropic's official CLI. ARM64 Linux is supported.
