@@ -118,44 +118,54 @@ c.chat.completions.create(
 
 ## Throughput
 
-Measured 2026-04-25 against `http://localhost:8000` with `openai/gpt-oss-20b`
-on the GB10, `max_model_len=131072`, `--gpu-memory-utilization 0.85`, no
-other vLLM flags (so `max_num_seqs` is the engine default). Harness is
-`spark/bench_vllm.py`:
+**Setup.** Measured 2026-04-25 on **Spark** (NVIDIA GB10, sm_121, 128 GB
+unified memory, aarch64) running the NGC container
+`nvcr.io/nvidia/vllm:26.03.post1-py3` (vLLM 0.17.1+bd67d66a, the only image
+that has working sm_121 kernels). Model `openai/gpt-oss-20b`
+(MoE 21B / 3.6B active, MXFP4 native, ~13 GB on disk) loaded from the local
+HF cache at `/srv/vllm/hf`. vLLM args: `--max-model-len 131072` (the
+model's native context — no truncation), `--gpu-memory-utilization 0.85`,
+no other flags, so `max_num_seqs` etc. fall back to engine defaults.
+Service runs as the `vllm.service` systemd unit; the benchmark hits
+`http://localhost:8000/v1/completions` directly to avoid the Cloudflare
+Tunnel's 100 s edge timeout that otherwise kills long-prefix prefills.
 
-- `/v1/completions` with `prompt` as raw token-ID arrays (no tokenizer in
-  the loop, prompts/completions are gibberish — that's intentional).
-- Each request: random-token prefix of length L, output length sampled
-  uniformly from `[128, 1024]`, pinned via `min_tokens=max_tokens` and
-  `ignore_eos=True` so every request emits exactly the requested length.
-- Distinct per-request seed for the prefix tokens, so prefix caching is
-  defeated (real engine work, not cache hits).
-- Per-cell budget: ~131 072 (= 2¹⁷) generation tokens, with at least N
-  requests so the engine sees a full first batch even at long prefixes.
-- One warmup pass per prefix length before timing.
-- Bypasses the Cloudflare tunnel because long-prefix prefills (~96 k
-  tokens) easily blow Cloudflare's 100 s edge timeout.
+Harness is `spark/bench_vllm.py`:
+
+- `/v1/completions` with `prompt` as a raw token-ID array (no tokenizer in
+  the loop; prompts/completions are gibberish — that's intentional).
+- Each cell of `(N, prefix_tokens)` sends N concurrent requests that **share
+  one random prefix** of length `prefix_tokens`. vLLM's prefix cache absorbs
+  the prefill cost after the first request, so each cell measures decode
+  throughput at concurrency N once the shared prefill is amortized
+  (representative of shared-context workloads — long system prompt or
+  shared document).
+- Output length sampled per-request uniformly from `[128, 1024]`, pinned
+  via `min_tokens=max_tokens` and `ignore_eos=True`, so every request emits
+  exactly the requested length regardless of model behavior.
+- One warmup pass at the start of the run (8 concurrent, 64-token shared
+  prefix, 16-token output) — settles engine state, not a per-cell warmup.
 
 Cell value is **total generation throughput (output tokens per second)** =
-`sum(completion_tokens) / wall_time` across all requests in the cell, so
-queued completions count.
+`sum(completion_tokens) / wall_time` across all N requests in the cell.
 
-| prefix tokens \ concurrency |   1 |   4 |  16 |  64 | 256 |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-|     1 |  48 | 124 | 277 |  874 | 2666 |
-|  1024 |  47 | 122 | 295 |  746 | 1438 |
-| 16384 |  35 |  64 | 107 |  118 |    — |
-| 98304 |   — |   — |   — |    — |    — |
+| prefix tokens |   1 |   4 |  16 |  64 | 256 | prefill (s) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+|     1 |  47 | 134 | 336 | 740 | 2145 | ~0   |
+|  1024 |  45 | 103 | 331 | 762 | 2282 | ~0.1 |
+| 16384 |  37 | 116 | 255 | 576 | 1302 | ~1.6 |
+| 98304 |  11 |  25 |  78 | 195 | 381 | ~10  |
 
-> Numbers are from the previous 1 M-budget run. The 1 M cells finished but
-> took too long; the current 128 k-generation-budget run is in flight and
-> these will be replaced once it completes. Empty cells are pending. Engine
-> logs during the run show running batch peaking at 69–97 reqs (KV cache /
-> chunked-prefill bound), so concurrencies past that mostly extend the
-> queue rather than raising throughput.
+Prefill column is approximate, derived from the engine's reported peak
+prompt throughput (~10 k tok/s during chunked-prefill steps, with
+`max_num_batched_tokens=2048`). For a precise number, run
+`spark/bench_prefill.py` after the bench (sends one request with
+`max_tokens=1` per prefix length and reports wall time).
+
+> Run in flight; cells fill in as they complete.
 
 To re-run: `python3 spark/bench_vllm.py`. Tweak `PREFIX_LENGTHS`,
-`CONCURRENCIES`, `OUTPUT_TOKENS_MIN/MAX`, or `GEN_TOKENS_BUDGET` at the top.
+`CONCURRENCIES`, or `OUTPUT_TOKENS_MIN/MAX` at the top.
 
 ## Switching models
 

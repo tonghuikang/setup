@@ -3,28 +3,29 @@
 
 Talks to vLLM's /v1/completions endpoint with `prompt` as a list of integer
 token IDs (vLLM accepts that directly), so we don't need a tokenizer or any
-text calibration. Each request gets a unique random sequence of token IDs
-(distinct per-request seed) so the prefix cache cannot help across requests.
+text calibration.
+
+Each (N, prefix_tokens) cell sends N concurrent requests that all share the
+same random prefix of `prefix_tokens` token IDs — i.e. shared-context
+workload (long system prompt / document), where vLLM's prefix cache absorbs
+the prefill cost after the first request and the cell measures decode
+throughput at concurrency N.
 
 Generation length is sampled per-request uniformly in
 [OUTPUT_TOKENS_MIN, OUTPUT_TOKENS_MAX], pinned via min_tokens=max_tokens and
 ignore_eos=True so the model emits exactly that many tokens regardless of
-content. Prompt and response are gibberish — we only care about throughput.
+content. Prompts/completions are gibberish — only throughput matters.
 
-Each (concurrency, prefix_tokens) cell submits enough requests so the total
-prompt+output tokens crosses TOTAL_TOKENS_BUDGET (default 2**20 = ~1M). For
-high concurrency / short prefixes that's many small rounds; for long prefixes
-it's a handful of large requests. Reports total generation throughput
-(tok/s) per cell after a warmup pass.
+A single warmup pass (8 concurrent, 64-token shared prefix, 16 output
+tokens) runs once at the start, before any timed cell.
 """
-import json, math, time, urllib.request, concurrent.futures as cf, random, sys
+import json, time, urllib.request, concurrent.futures as cf, random, sys
 
 URL = "http://localhost:8000/v1/completions"   # bypass Cloudflare's 100s edge timeout
 MODEL = "openai/gpt-oss-20b"
 
 OUTPUT_TOKENS_MIN = 128
 OUTPUT_TOKENS_MAX = 1024
-GEN_TOKENS_BUDGET = 2 ** 17      # power of 2, 131072 generation tokens per cell
 
 PREFIX_LENGTHS = [1, 1024, 16384, 98304]
 CONCURRENCIES = [1, 4, 16, 64, 256]
@@ -66,18 +67,17 @@ def one(prompt_ids, output_tokens):
 def plan_requests(N, prefix_tokens, seed_base):
     """Return list of (prompt_ids, output_tokens) for one cell.
 
-    Targets GEN_TOKENS_BUDGET total completion tokens per cell, but always
-    sends at least N requests so the engine has a full first batch.
+    All N requests share the same prefix (one prefix per prefix-length).
+    This lets vLLM's prefix cache absorb the prefill cost after the first
+    request — appropriate for shared-context workloads (long system prompt,
+    shared document, …).
     """
     out_rng = random.Random(seed_base)
-    avg_out = (OUTPUT_TOKENS_MIN + OUTPUT_TOKENS_MAX) // 2
-    by_budget = math.ceil(GEN_TOKENS_BUDGET / avg_out)
-    n_requests = max(N, by_budget)
+    shared_prefix = random_token_ids(prefix_tokens, seed=seed_base)
     plan = []
-    for i in range(n_requests):
+    for _ in range(N):
         out_tok = out_rng.randint(OUTPUT_TOKENS_MIN, OUTPUT_TOKENS_MAX)
-        prompt = random_token_ids(prefix_tokens, seed=seed_base * 100_003 + i)
-        plan.append((prompt, out_tok))
+        plan.append((shared_prefix, out_tok))
     return plan
 
 
@@ -94,19 +94,22 @@ def sweep_cell(N, prefix_tokens, seed_base):
 
 
 def warmup():
-    """One pass at modest concurrency for each prefix length to settle CUDA graphs / batch shapes."""
-    for L in PREFIX_LENGTHS:
-        # min(8, max(CONCURRENCIES)) — keep warmup quick at long prefixes
-        Nw = min(8, max(CONCURRENCIES))
-        prompts = [(random_token_ids(L, seed=99_000 + i), 128) for i in range(Nw)]
-        with cf.ThreadPoolExecutor(max_workers=Nw) as ex:
-            list(ex.map(lambda pk: one(pk[0], pk[1]), prompts))
-        print(f"#   warmup done for prefix={L}", file=sys.stderr)
+    """One short pass to settle engine state before any timed cell.
+
+    16-token output, single shared 64-token prefix replicated across the
+    warmup batch.
+    """
+    Nw = min(8, max(CONCURRENCIES))
+    shared_prefix = random_token_ids(64, seed=99_000)
+    prompts = [(shared_prefix, 16) for _ in range(Nw)]
+    with cf.ThreadPoolExecutor(max_workers=Nw) as ex:
+        list(ex.map(lambda pk: one(pk[0], pk[1]), prompts))
+    print(f"#   warmup done", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    print(f"# Config: GEN_TOKENS_BUDGET={GEN_TOKENS_BUDGET}, "
-          f"output_tokens~U[{OUTPUT_TOKENS_MIN},{OUTPUT_TOKENS_MAX}]",
+    print(f"# Config: output_tokens~U[{OUTPUT_TOKENS_MIN},{OUTPUT_TOKENS_MAX}], "
+          f"shared prefix per cell",
           file=sys.stderr)
     print("# Warming up engine…", file=sys.stderr)
     warmup()
