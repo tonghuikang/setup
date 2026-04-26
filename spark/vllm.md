@@ -140,9 +140,12 @@ Harness is `spark/bench_vllm.py`:
   throughput at concurrency N once the shared prefill is amortized
   (representative of shared-context workloads — long system prompt or
   shared document).
-- Output length sampled per-request uniformly from `[128, 1024]`, pinned
-  via `min_tokens=max_tokens` and `ignore_eos=True`, so every request emits
-  exactly the requested length regardless of model behavior.
+- Output length sampled per-request uniformly from
+  `[64, min(1024, 65 536/N)]`, pinned via `min_tokens=max_tokens` and
+  `ignore_eos=True`, so every request emits exactly the requested length.
+  The per-cell ceiling on total output is 65 536 tokens
+  (`GEN_BUDGET_PER_CELL`); high-N cells get clamped down to keep cells
+  bounded, low-N cells use the full 64–1024 range.
 - One warmup pass at the start of the run (8 concurrent, 64-token shared
   prefix, 16-token output) — settles engine state, not a per-cell warmup.
 
