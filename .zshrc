@@ -59,8 +59,17 @@ alias ....='cd ../../../../'
 alias .....='cd ../../../../'
 
 # applications
-alias cf="caffeinate"
-alias code="open -a /Applications/Visual\ Studio\ Code.app"
+case "$(uname -s)" in
+  Darwin)
+    # macOS-only: caffeinate doesn't exist on Linux, and `open -a` is
+    # macOS's syntax (xdg-open on Linux uses a different flag set, so
+    # leaving this active under bash on Linux makes `code .` print
+    # `xdg-open: unexpected option '-a'`). On Linux, `code` is provided
+    # by the VS Code .deb at /usr/bin/code, so no alias is needed.
+    alias cf="caffeinate"
+    alias code="open -a /Applications/Visual\ Studio\ Code.app"
+    ;;
+esac
 alias p="python"
 alias hg="history | grep"
 

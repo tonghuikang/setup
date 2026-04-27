@@ -270,6 +270,34 @@ sudo snap install chromium
 Firefox is also available (`sudo snap install firefox`) and ships
 preinstalled on most Ubuntu desktop images.
 
+#### Blank new tab and homepage (Firefox)
+
+By default Firefox opens new tabs at `about:newtab` (activity stream:
+top sites, recommended stories, sponsored tiles) and the homepage / new
+windows at `about:home` (similar content). To make both completely
+empty, two prefs are involved:
+
+- `browser.newtabpage.enabled = false` — new tabs fall back to
+  `about:blank`.
+- `browser.startup.homepage = "about:blank"` — homepage and new windows
+  use `about:blank`.
+
+Either flip both to "Blank Page" in `about:preferences#home`, or pin
+them in `user.js` so they survive a profile reset:
+
+```sh
+# active profile = the Default= line under [Install...] in profiles.ini
+profile=$(awk -F= '/^\[Install/ {f=1; next} f && /^Default=/ \
+    {print $2; exit}' ~/.mozilla/firefox/profiles.ini)
+cat >> ~/.mozilla/firefox/"$profile"/user.js <<'EOF'
+user_pref("browser.newtabpage.enabled", false);
+user_pref("browser.startup.homepage", "about:blank");
+EOF
+```
+
+`user.js` is re-applied on every Firefox start, so this overrides any
+later UI change. Restart Firefox to take effect.
+
 ### Claude Code
 
 Anthropic's official CLI. ARM64 Linux is supported.
@@ -305,13 +333,71 @@ fc-match -s ':charset=23F5' | head -1   # → Symbola
 Restart any open terminals after install to pick up the new fontconfig
 cache.
 
+### VS Code
+
+Microsoft publishes an aarch64 `code` package in their apt repo, so the
+clean install path is to add the repo and let `apt` manage updates (rather
+than dropping a one-off `.deb` or going through snap, which on this box
+would be a second package manager for one app).
+
+```sh
+# Microsoft GPG key → /etc/apt/keyrings
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
+  | gpg --dearmor | sudo install -D -o root -g root -m 644 /dev/stdin \
+      /etc/apt/keyrings/packages.microsoft.gpg
+
+# Repo entry (deb822 format, arm64 only)
+sudo tee /etc/apt/sources.list.d/vscode.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://packages.microsoft.com/repos/code
+Suites: stable
+Components: main
+Architectures: arm64
+Signed-By: /etc/apt/keyrings/packages.microsoft.gpg
+EOF
+
+sudo apt update
+sudo apt install -y code
+```
+
+Verify with `code --version`. The `code` CLI is on `PATH` after install,
+so `code .` from a terminal opens the current directory in a window.
+
+#### Disable Copilot and telemetry
+
+Stock VS Code bundles GitHub Copilot / Copilot Chat as built-in extensions
+and ships chat surface area in the title bar even when no account is
+signed in. Two settings in `~/.config/Code/User/settings.json` turn the
+whole thing off:
+
+```json
+{
+    "chat.disableAIFeatures": true,
+    "telemetry.telemetryLevel": "off"
+}
+```
+
+- `chat.disableAIFeatures` is the single MS-blessed switch that "disables
+  and hides features like chat or inline suggestions in VS Code and
+  disables the Copilot extensions" — no need to uninstall the bundled
+  Copilot extensions separately.
+- `telemetry.telemetryLevel: "off"` covers VS Code's own telemetry to
+  Microsoft, which is independent of Copilot. Set this if you don't want
+  editor usage data leaving the box regardless of Copilot state.
+
+Reload the window (`Ctrl+Shift+P → Developer: Reload Window`) for the
+chat UI to disappear.
+
 ## Shell
 
 Default shell is bash (`/bin/bash`); zsh is not installed. The repo keeps a
 shared aliases/functions file at the repo root [`../.zshrc`](../.zshrc) that
 both the macOS (zsh) and Spark (bash) setups source — most aliases are
-shell-agnostic, the few macOS-specific ones (`open`, `caffeinate`, `code`)
-are harmless when sourced under bash and just won't be useful here.
+shell-agnostic. The macOS-only ones (`caffeinate`, the `code` shim that
+calls `open -a`) are wrapped in a `case "$(uname -s)" in Darwin) … ;;`
+guard, so they don't trigger under bash on Linux. (`code` on Linux is
+provided as a real binary by the VS Code .deb at `/usr/bin/code`; no
+alias needed.)
 
 `~/.bashrc` ends with:
 
