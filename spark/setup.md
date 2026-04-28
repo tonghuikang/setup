@@ -333,6 +333,34 @@ fc-match -s ':charset=23F5' | head -1   # → Symbola
 Restart any open terminals after install to pick up the new fontconfig
 cache.
 
+### Codex CLI
+
+OpenAI's Codex CLI, distributed on npm as `@openai/codex` (ARM64 Linux is
+supported — the package ships a prebuilt aarch64 binary).
+
+```sh
+npm install -g @openai/codex
+```
+
+The npm global prefix on this box is the unpacked Node tarball directory
+itself (`/home/htong/.local/node-v22.11.0-linux-arm64`), so the binary lands
+at `<prefix>/bin/codex` — which is **not** on `PATH`. `~/.local/bin` is on
+`PATH` and already holds symlinks to `node` and `npm` pointing into that
+prefix; symlink `codex` the same way:
+
+```sh
+ln -s /home/htong/.local/node-v22.11.0-linux-arm64/bin/codex \
+      ~/.local/bin/codex
+```
+
+Verify with `codex --version`. First launch prompts an interactive sign-in.
+
+Any future `npm install -g <pkg>` that ships a CLI binary will need the
+same symlink treatment unless the npm prefix is moved to `~/.local`
+(`npm config set prefix ~/.local`), which would put `bin/` directly on
+`PATH` but mix npm-managed files into the same tree as everything else
+under `~/.local`.
+
 ### VS Code
 
 Microsoft publishes an aarch64 `code` package in their apt repo, so the

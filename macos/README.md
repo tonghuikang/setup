@@ -111,6 +111,13 @@ pbcopy < ~/.ssh/id_ed25519.pub
 # https://github.com/settings/keys
 ```
 
+Set up the global gitignore — see [gitignore_global](../gitignore_global).
+
+```
+git config --global core.excludesfile ~/.gitignore_global
+cp ../gitignore_global ~/.gitignore_global
+```
+
 ```
 brew install --cask obsidian
 brew install --cask spotify
