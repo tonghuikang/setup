@@ -99,3 +99,69 @@ alias cfgen="python3 sample_crawl_cf.py"
 alias dev="sft ssh devsharedcpp26"
 alias q='sft login && ssh -t devbox "tmux a"'
 alias ppc="pre-commit run --all"
+
+# codex-loop: drive a plan to completion with a worker/checker pair.
+# Usage: codex-loop <plan.md>
+# Tunables — edit these in place:
+#   sentinel    exact line the checker must emit to stop the loop
+#   max_iters   hard cap on iterations (0 = unlimited)
+#   model       model passed to both agents ("" = codex default)
+codex-loop() {
+    local sentinel='all requirements in <plan> is fulfilled'
+    local max_iters=0
+    local model=''
+
+    local plan="$1"
+    if [[ -z "$plan" ]]; then
+        echo "usage: codex-loop <plan.md>" >&2
+        return 2
+    fi
+    if [[ ! -f "$plan" ]]; then
+        echo "codex-loop: plan file not found: $plan" >&2
+        return 2
+    fi
+
+    # Portable absolute path (macOS lacks GNU realpath by default).
+    local plan_abs
+    plan_abs="$(cd "$(dirname "$plan")" && pwd)/$(basename "$plan")"
+
+    local model_args=()
+    if [[ -n "$model" ]]; then
+        model_args=(-m "$model")
+    fi
+
+    local verdict_file
+    verdict_file="$(mktemp)" || return 1
+    # shellcheck disable=SC2064
+    trap "rm -f '$verdict_file'" RETURN
+
+    local i=0
+    while true; do
+        i=$((i + 1))
+        if (( max_iters > 0 && i > max_iters )); then
+            echo "=== codex-loop: hit max_iters=$max_iters, giving up ===" >&2
+            return 1
+        fi
+
+        echo "=== codex-loop iter $i: worker on $plan_abs ===" >&2
+        codex exec --full-auto "${model_args[@]}" \
+            "Read the plan at $plan_abs. Inspect the current repository state to see what is already done. Then make as much concrete progress as you can on any unsatisfied requirement. Do not stop until you have finished a meaningful unit of work or are blocked. Do not ask questions; make reasonable assumptions."
+
+        echo "=== codex-loop iter $i: checker ===" >&2
+        : > "$verdict_file"
+        codex exec --sandbox read-only "${model_args[@]}" \
+            --output-last-message "$verdict_file" \
+            "Read the plan at $plan_abs and inspect the current repository state. Decide whether every single requirement in the plan is fully satisfied right now. If yes, respond with EXACTLY this one line and nothing else: ${sentinel}. If not, list each unsatisfied requirement on its own line, prefixed with 'TODO: '."
+
+        if [[ -s "$verdict_file" ]] && grep -qF "$sentinel" "$verdict_file"; then
+            echo "=== codex-loop: done after $i iter(s) ===" >&2
+            cat "$verdict_file"
+            return 0
+        fi
+
+        echo "=== codex-loop iter $i: not done yet, looping ===" >&2
+        if [[ -s "$verdict_file" ]]; then
+            sed 's/^/    /' "$verdict_file" >&2
+        fi
+    done
+}
