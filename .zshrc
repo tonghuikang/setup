@@ -1,3 +1,16 @@
+#############
+### ENV   ###
+#############
+
+# Load sudo password into $SUDO_PASSWORD from ~/.sudo_password.
+# WARNING: only do this if your system is isolated (single-user dev box,
+# no untrusted processes, no shared access). Anything that can read your
+# env or that file gets root. ~/.sudo_password should be chmod 600.
+if [ -r "$HOME/.sudo_password" ]; then
+    SUDO_PASSWORD="$(cat "$HOME/.sudo_password")"
+    export SUDO_PASSWORD
+fi
+
 ###############
 ### ALIASES ###
 ###############
@@ -130,6 +143,16 @@ codex-loop() {
         model_args=(-m "$model")
     fi
 
+    # If a sudo password is loaded in the env, let codex's child shells
+    # inherit it. Mention to the worker that it's available — only if
+    # something actually needs root. Let codex pick the invocation style.
+    local sudo_args=()
+    local sudo_hint=''
+    if [[ -n "$SUDO_PASSWORD" ]]; then
+        sudo_args=(-c shell_environment_policy.inherit=all)
+        sudo_hint=" The env var \$SUDO_PASSWORD (value: $SUDO_PASSWORD) is available if — and only if — a step actually requires root. Use it however you like; do not invoke sudo unnecessarily."
+    fi
+
     local verdict_file
     verdict_file="$(mktemp)" || return 1
     # shellcheck disable=SC2064
@@ -144,14 +167,14 @@ codex-loop() {
         fi
 
         echo "=== codex-loop iter $i: worker on $plan_abs ===" >&2
-        codex exec --full-auto "${model_args[@]}" \
-            "Read the plan at $plan_abs. Inspect the current repository state to see what is already done. Then make as much concrete progress as you can on any unsatisfied requirement. Do not stop until you have finished a meaningful unit of work or are blocked. Do not ask questions; make reasonable assumptions."
+        codex exec --dangerously-bypass-approvals-and-sandbox "${model_args[@]}" "${sudo_args[@]}" \
+            "Read the plan at $plan_abs. Inspect the current repository state to see what is already done. Then make as much concrete progress as you can on any unsatisfied requirement. Do not stop until you have finished a meaningful unit of work or are blocked. Do not ask questions; make reasonable assumptions.${sudo_hint}"
 
         echo "=== codex-loop iter $i: checker ===" >&2
         : > "$verdict_file"
-        codex exec --sandbox read-only "${model_args[@]}" \
+        codex exec --dangerously-bypass-approvals-and-sandbox "${model_args[@]}" \
             --output-last-message "$verdict_file" \
-            "Read the plan at $plan_abs and inspect the current repository state. Decide whether every single requirement in the plan is fully satisfied right now. If yes, respond with EXACTLY this one line and nothing else: ${sentinel}. If not, list each unsatisfied requirement on its own line, prefixed with 'TODO: '."
+            "Read the plan at $plan_abs and inspect the current repository state. Do NOT modify any files. Decide whether every single requirement in the plan is fully satisfied right now. If yes, respond with EXACTLY this one line and nothing else: ${sentinel}. If not, list each unsatisfied requirement on its own line, prefixed with 'TODO: '."
 
         if [[ -s "$verdict_file" ]] && grep -qF "$sentinel" "$verdict_file"; then
             echo "=== codex-loop: done after $i iter(s) ===" >&2
