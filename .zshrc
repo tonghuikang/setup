@@ -120,7 +120,7 @@ alias ppc="pre-commit run --all"
 #   max_iters   hard cap on iterations (0 = unlimited)
 #   model       model passed to both agents ("" = codex default)
 codex-loop() {
-    local sentinel='all requirements in <plan> is fulfilled'
+    local sentinel_template='all requirements in <plan> is fulfilled'
     local max_iters=0
     local model=''
 
@@ -137,6 +137,12 @@ codex-loop() {
     # Portable absolute path (macOS lacks GNU realpath by default).
     local plan_abs
     plan_abs="$(cd "$(dirname "$plan")" && pwd)/$(basename "$plan")"
+
+    # Substitute <plan> in the sentinel with the actual plan basename so
+    # the checker can't trivially emit it while paraphrasing the plan.
+    local plan_name
+    plan_name="$(basename "$plan_abs")"
+    local sentinel="${sentinel_template/<plan>/$plan_name}"
 
     local model_args=()
     if [[ -n "$model" ]]; then
@@ -158,6 +164,7 @@ codex-loop() {
     # shellcheck disable=SC2064
     trap "rm -f '$verdict_file'" RETURN
 
+    local prior_verdict=''
     local i=0
     while true; do
         i=$((i + 1))
@@ -166,9 +173,18 @@ codex-loop() {
             return 1
         fi
 
+        local worker_prompt="Read the plan at $plan_abs. Inspect the current repository state to see what is already done. Then make as much concrete progress as you can on any unsatisfied requirement. Do not stop until you have finished a meaningful unit of work or are blocked. Do not ask questions; make reasonable assumptions.${sudo_hint}"
+        if [[ -n "$prior_verdict" ]]; then
+            worker_prompt="${worker_prompt}
+
+The previous checker iteration produced the following TODO list of unsatisfied requirements. Treat this as your priority punch list for this iteration — resolve these items first before doing anything else, and do not redo work that the checker did not flag:
+
+${prior_verdict}"
+        fi
+
         echo "=== codex-loop iter $i: worker on $plan_abs ===" >&2
         codex exec --dangerously-bypass-approvals-and-sandbox "${model_args[@]}" "${sudo_args[@]}" \
-            "Read the plan at $plan_abs. Inspect the current repository state to see what is already done. Then make as much concrete progress as you can on any unsatisfied requirement. Do not stop until you have finished a meaningful unit of work or are blocked. Do not ask questions; make reasonable assumptions.${sudo_hint}"
+            "$worker_prompt"
 
         echo "=== codex-loop iter $i: checker ===" >&2
         : > "$verdict_file"
@@ -176,7 +192,14 @@ codex-loop() {
             --output-last-message "$verdict_file" \
             "Read the plan at $plan_abs and inspect the current repository state. Do NOT modify any files. Decide whether every single requirement in the plan is fully satisfied right now. If yes, respond with EXACTLY this one line and nothing else: ${sentinel}. If not, list each unsatisfied requirement on its own line, prefixed with 'TODO: '."
 
-        if [[ -s "$verdict_file" ]] && grep -qF "$sentinel" "$verdict_file"; then
+        # Whole-line match, tolerant of trailing whitespace/punctuation
+        # (the checker LLM tends to append a period). Still strict enough
+        # that the sentinel embedded inside a longer sentence won't match.
+        if awk -v target="$sentinel" '{
+                line=$0
+                sub(/[[:space:][:punct:]]+$/, "", line)
+                if (line == target) { ok=1; exit }
+            } END { exit !ok }' "$verdict_file" 2>/dev/null; then
             echo "=== codex-loop: done after $i iter(s) ===" >&2
             cat "$verdict_file"
             return 0
@@ -185,6 +208,9 @@ codex-loop() {
         echo "=== codex-loop iter $i: not done yet, looping ===" >&2
         if [[ -s "$verdict_file" ]]; then
             sed 's/^/    /' "$verdict_file" >&2
+            prior_verdict="$(cat "$verdict_file")"
+        else
+            prior_verdict=''
         fi
     done
 }
