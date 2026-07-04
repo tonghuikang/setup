@@ -25,19 +25,30 @@ env-configurable; its docstring has ready-made invocations.
   Do NOT derive prefill from N=1 cell walls: decode slows with context, so
   the subtraction wildly overestimates (verified 2026-07-03: derived said
   10.5 s for Qwen3-0.6B @32k, measured 2.46 s).
+- **Load** line per model: wall time from `docker run` to the first
+  successful `/v1/models` response (weights already cached on local disk;
+  includes container start, weight load, and CUDA-graph capture). Measured
+  2026-07-04, one-off container as described in the sweep setup below.
 
-## 2026-07-03 sweep — all servable models
+## 2026-07-03/04 sweep — all servable models
 
 Setup: `vllm-fixed:26.06` (vLLM 0.22.1), one-off container per model on port
 8001, `--max-model-len 36000`, `--gpu-memory-utilization 0.70`, service
-stopped. Reduced grid: prefix {1, 4096, 32768} × concurrency {1, 8, 64, 256},
-32 768 output tokens per cell (output 64–512 tok/request), ≤30 min per model
-(load time excluded), low-concurrency cells first. `–` = not run (per-model
-time budget exhausted, or prefill pass not yet done for the big models —
-the harness now measures prefill automatically on every future run).
+stopped. Grid: prefix {1, 4096, 32768} × concurrency {1, 8, 64, 256},
+32 768 output tokens per cell (output 64–512 tok/request), low-concurrency
+cells first. The 07-03 pass used a ≤30 min per-model budget and left gaps;
+the 07-04 completion pass re-ran every partial model with **no deadline**
+(`BENCH_DEADLINE_S=0`, per-request timeout raised to 4 h via the new
+`BENCH_REQ_TIMEOUT_S`), so every servable cell now has a measured value —
+the slowest single cell (27B-FP8 at 32768×256) took 1 h 49 min.
+Per-model deviations: Qwen2.5-0.5B (`--max-model-len 32768`, its native
+ctx), gemma-4-31B (resharded copy, util 0.60), gpt-oss-120b
+(`26.03.post1-py3` image, util 0.60).
 Raw outputs: [bench-results/](./bench-results/).
 
 ### Qwen/Qwen3-0.6B
+
+Load: 61 s.
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -47,6 +58,8 @@ Raw outputs: [bench-results/](./bench-results/).
 
 ### google/gemma-4-E2B-it
 
+Load: 2 m 46 s.
+
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1 | 40 | 363 | 2237 | 6544 | 0.03 |
@@ -55,6 +68,8 @@ Raw outputs: [bench-results/](./bench-results/).
 
 ### google/gemma-4-E4B-it
 
+Load: 3 m 36 s.
+
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1 | 19 | 181 | 1150 | 3620 | 0.06 |
@@ -62,6 +77,8 @@ Raw outputs: [bench-results/](./bench-results/).
 | 32768 | 14 | 120 | 534 | 714 | 7.66 |
 
 ### openai/gpt-oss-20b
+
+Load: 2 m 16 s.
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -75,20 +92,24 @@ KV budgets, so not a perfectly controlled comparison).
 
 ### Qwen/Qwen3.6-27B-FP8
 
+Load: 6 m 52 s.
+
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1 | 9 | 65 | 299 | 487 | 0.12 |
 | 4096 | 8 | 49 | 103 | 35 | 2.03 |
-| 32768 | 6 | 16 | 13 | – | 18.77 |
+| 32768 | 6 | 16 | 13 | 5 | 18.77 |
 
 ~8 tok/s single-stream is bandwidth math: ~29 GB of dense weights per token
 on a ~273 GB/s box. Long-prefix + high-N cells collapse under KV-cache
 preemption: (32768, 64) processed 2.1M prompt tokens (every request
-re-prefilled) and took 42 min for 12.9 tok/s. The (32768, 256) cell
-exceeded a 1-hour per-request timeout on the first attempt; rerun pending
-with a 4-hour timeout.
+re-prefilled) and took 42 min for 12.9 tok/s; (32768, 256) took 1 h 49 min
+for 5 tok/s (it exceeded a 1-hour per-request timeout on the first attempt
+and was rerun with a 4-hour one). Worst long-context scaler of the fleet.
 
 ### nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+
+Load: 7 m 42 s.
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -101,6 +122,8 @@ Same long-prefix inversion as the Qwen MoEs: (32768, 256) collapsed to
 Saturates around N=64 for long-context work.
 
 ### Qwen/Qwen3.6-35B-A3B-FP8
+
+Load: 6 m 47 s.
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -115,6 +138,8 @@ for long-context work this model saturates around N=64 on this box. The
 
 ### google/gemma-4-26B-A4B-it
 
+Load: 6 m 57 s.
+
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1 | 25 | 169 | 1142 | 3284 | 0.04 |
@@ -125,16 +150,22 @@ Best long-context scaling of the big models (sliding-window attention).
 
 ### Qwen/Qwen3.6-35B-A3B (BF16)
 
+Load: 6 m 07 s.
+
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 30 | 198 | 619 | – | – |
-| 4096 | 29 | 84 | 172 | – | – |
-| 32768 | 19 | 32 | 28 | – | – |
+| 1 | 31 | 193 | 261 | 378 | 0.04 |
+| 4096 | 29 | 85 | 177 | 73 | 1.05 |
+| 32768 | 19 | 32 | 28 | 11 | 9.49 |
 
-FP8 variant is ~1.8× faster single-stream (53 vs 30) — bandwidth-bound, so
-prefer FP8 in practice.
+FP8 variant is ~1.8× faster single-stream (54 vs 31) — bandwidth-bound, so
+prefer FP8 in practice. (The 2026-07-03 partial run measured 619 at
+(1, 64) vs 261 here; short-prefix high-N cells on this model are noisy,
+likely MoE expert-cache effects — the long-prefix cells reproduce well.)
 
 ### google/gemma-4-31B-it (resharded)
+
+Load: 7 m 52 s.
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -150,7 +181,7 @@ speed.
 ### Qwen/Qwen2.5-0.5B-Instruct
 
 Run 2026-07-04 at `--max-model-len 32768` (its native ctx — the
-32 768-prefix row can't fit and is n/a).
+32 768-prefix row can't fit and is n/a). Load: 56 s.
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -162,6 +193,7 @@ Run 2026-07-04 at `--max-model-len 32768` (its native ctx — the
 
 Run 2026-07-04 on `26.03.post1-py3` at `--gpu-memory-utilization 0.60`
 (only image that can serve it, [README](./README.md#container-images)).
+Load: 7 m 22 s.
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
