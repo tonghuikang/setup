@@ -449,8 +449,8 @@ SSH-from-anywhere is set up via a Cloudflare Tunnel — the public hostname
 
 A vLLM OpenAI-compatible server runs as a systemd-managed Docker container
 on `127.0.0.1:8000` and is exposed via the same Cloudflare Tunnel at
-`https://vllm.huikang.dev`. Setup, model switching, auth, and ops live in
-[`vllm.md`](./vllm.md).
+`https://vllm.huikang.dev`. Setup, model switching, auth, ops, model test
+results, and benchmarks live in [`inference/`](./inference/README.md).
 
 ## Useful one-liners for this box
 
