@@ -52,8 +52,8 @@ Edit `VLLM_MODEL` in `/etc/vllm/env`, then `sudo systemctl restart vllm`.
 First boot of a new model downloads weights into `/srv/vllm/hf`, which can
 take many minutes; subsequent restarts hit cache and start in seconds. Watch
 with `journalctl -u vllm -f`; once the server logs `Application startup
-complete`, it's ready. See [models.md](./models.md) for what runs on this
-box and [failure-modes.md](./failure-modes.md) **before loading anything
+complete`, it's ready. See the models table in [README.md](./README.md#models-on-this-box) for what runs on this
+box and [failure modes](./README.md#failure-modes) **before loading anything
 with big safetensors files**.
 
 ## Auth
