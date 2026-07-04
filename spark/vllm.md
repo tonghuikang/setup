@@ -7,17 +7,22 @@ through the same Cloudflare Tunnel that fronts SSH. Setup performed 2026-04-25.
 
 `vllm/vllm-openai` and the upstream PyPI wheels are **compiled for sm_120 max**.
 The GB10 is **sm_121**, so the stock image starts but every CUDA kernel launch
-fails with `CUDA error: no kernel image is available for execution`.
+fails with `CUDA error: no kernel image is available for execution`. Only
+NVIDIA's aarch64 + CUDA 13 + sm_121 builds on NGC (`nvcr.io/nvidia/vllm`)
+work on Spark.
 
-NVIDIA publishes an aarch64 + CUDA 13 + sm_121 build on NGC:
+Images on disk (as of 2026-07-03):
 
-```
-nvcr.io/nvidia/vllm:26.03.post1-py3
-```
+| Tag | vLLM | Status |
+| --- | --- | --- |
+| `vllm-fixed:26.06` (local) | 0.22.1 | **preferred** — NGC `26.06-py3` + `prometheus-fastapi-instrumentator` 8.0.2 |
+| `vllm-fixed:26.06-tf` (local) | 0.22.1 | above + `transformers` 5.13, for newer HF architectures |
+| `nvcr.io/nvidia/vllm:26.06-py3` | 0.22.1 | **broken as shipped**: pins instrumentator 8.0.0, which 500s every HTTP request under its FastAPI (`'_IncludedRouter' object has no attribute 'path'`). Engine loads fine, so logs look healthy while serving nothing |
+| `nvcr.io/nvidia/vllm:26.03.post1-py3` | 0.17.1 | previous production image; keep — `gpt-oss-120b` only serves on this one (26.06's MXFP4 MoE prep OOMs the host, see Failure modes) |
 
-This is the only container that has worked end-to-end on Spark without source
-patches. Newer monthly tags (`26.04-py3`, …) are published on the same
-namespace; bump the tag in `/etc/vllm/env` when a newer one ships.
+When a newer NGC tag ships, re-test before switching: check the
+instrumentator bug is fixed, and re-try `google/gemma-4-12B-it`
+(`gemma4_unified` arch, unsupported by vLLM 0.22.1).
 
 ## Architecture
 
@@ -89,7 +94,14 @@ token at the edge.
 
 ## Operations
 
+**Autostart is disabled** (2026-07-03): the box no longer serves on boot,
+and stopping the service no longer triggers an auto-restart fight over
+memory. Start it when you want it:
+
 ```sh
+sudo systemctl start vllm     # serve gpt-oss-20b (per /etc/vllm/env)
+sudo systemctl enable vllm    # re-enable start-on-boot, if ever wanted
+
 # Status / logs (no sudo needed — htong is in adm + docker groups)
 systemctl status vllm
 journalctl -u vllm -f
@@ -209,13 +221,26 @@ then `sudo systemctl restart vllm`. The first restart will pull ~13 GB of
 MXFP4 weights into `/srv/vllm/hf`. Watch with `journalctl -u vllm -f`; once
 the server logs `Application startup complete`, it's ready.
 
-Tested models on this box:
+Tested models on this box (full serve smoke-test 2026-07-03, one at a
+time, `vllm-fixed:26.06` unless noted):
 
-- `Qwen/Qwen2.5-0.5B-Instruct` — smoke-test, ~1 GB, starts in ~30 s.
-- `openai/gpt-oss-20b` — production target, MoE 21B / 3.6B active, MXFP4
-  native, ~13 GB, comfortably fits in the 128 GB unified memory.
-- `openai/gpt-oss-120b` — larger sibling, MoE 117B / 5.1B active, MXFP4
-  native, ~60 GB; still fits but leaves less headroom for the desktop.
+| Model | Result | Notes |
+| --- | --- | --- |
+| `google/gemma-4-E2B-it` | ✅ | `~/.cache/huggingface` store |
+| `google/gemma-4-E4B-it` | ✅ | |
+| `google/gemma-4-12B-it` | ❌ | arch `gemma4_unified` unknown to vLLM 0.22.1; transformers-fallback also fails (shape mismatch). Re-check next NGC tag |
+| `google/gemma-4-26B-A4B-it` | ✅ | MoE |
+| `google/gemma-4-31B-it` | ✅* | only via resharded copy `~/.cache/huggingface/gemma-4-31B-it-resharded` (31×2 GB shards), `--gpu-memory-utilization ≥0.60`. Original 47 GB shard file hard-crashes the box (see Failure modes) |
+| `Qwen/Qwen3.6-27B-FP8` | ✅ | thinking model |
+| `Qwen/Qwen2.5-0.5B-Instruct` | ✅ | smoke-test, ~1 GB, starts in ~30 s |
+| `Qwen/Qwen3-0.6B` | ✅ | |
+| `Qwen/Qwen3.6-35B-A3B` | ✅ | MoE, ~70 GB BF16 |
+| `Qwen/Qwen3.6-35B-A3B-FP8` | ✅ | |
+| `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` | ✅ | MoE |
+| `openai/gpt-oss-20b` | ✅ | production target, MXFP4 ~13 GB; works on 26.03 and 26.06 |
+| `openai/gpt-oss-120b` | ✅ | **26.03.post1 only** — 26.06 MXFP4 prep OOMs the host |
+
+(`hexgrad/Kokoro-82M` is TTS — not a vLLM model.)
 
 For larger non-MoE models, check `nvidia-smi`'s memory column — the GB10's
 unified memory is shared with the desktop session, so leave headroom for X
@@ -223,9 +248,22 @@ and any apps you're running.
 
 ## Failure modes
 
+- **Whole machine hard-reboots during model load** — unified memory
+  exhaustion does not degrade gracefully (no OOM-kill; the box dies).
+  Root causes seen 2026-07-03: (a) two vLLM instances at once (the old
+  `Restart=always` service resurrecting itself under a test instance —
+  autostart is disabled now for this reason); (b) a checkpoint with a
+  huge single safetensors file — the load transient scales with the
+  *largest file*, because file pages race the GPU pool for the same RAM.
+  `gemma-4-31B-it` ships a 47 GB shard and killed the box twice; fix was
+  resharding it to 2 GB pieces (`~/.cache/huggingface/gemma-4-31B-it-resharded`).
+  Rules: one vLLM at a time, `--gpu-memory-utilization ≤ 0.70`, reshard
+  any checkpoint whose largest file exceeds ~10 GB, and for a first-time
+  load of a big model run a watchdog that kills the container if host
+  MemAvailable drops below ~4 GB.
 - Container crashes immediately with `CUDA error: no kernel image …` →
-  the image tag isn't sm_121-aware. Verify `/etc/vllm/env` has the
-  NGC tag, not `vllm/vllm-openai`.
+  the image tag isn't sm_121-aware. Verify the unit runs an NGC/sm_121
+  image, not `vllm/vllm-openai`.
 - Container OOMs on startup → lower `--gpu-memory-utilization` in
   `VLLM_EXTRA_ARGS`, or pick a smaller / quantized model.
 - `curl https://vllm.huikang.dev/v1/models` returns 502 → the container
@@ -250,7 +288,8 @@ sudo systemctl disable --now vllm
 sudo rm /etc/systemd/system/vllm.service
 sudo rm -rf /etc/vllm
 sudo systemctl daemon-reload
-sudo docker rmi nvcr.io/nvidia/vllm:26.03.post1-py3
+sudo docker rmi vllm-fixed:26.06 vllm-fixed:26.06-tf \
+  nvcr.io/nvidia/vllm:26.06-py3 nvcr.io/nvidia/vllm:26.03.post1-py3
 sudo rm -rf /srv/vllm
 ```
 
