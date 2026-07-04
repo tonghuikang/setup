@@ -35,6 +35,7 @@ Config via env:
   BENCH_CONCURRENCIES  comma-separated (default 1,8,64,256)
   BENCH_CELL_BUDGET    output tokens per cell (default 32768)
   BENCH_OUT_MIN/MAX    per-request output clamp (default 64/512)
+  BENCH_REQ_TIMEOUT_S  per-request HTTP timeout (default 1200)
 
 Examples:
   # reduced grid against a test container on 8001
@@ -64,6 +65,7 @@ CONCURRENCIES = [int(x) for x in os.environ.get("BENCH_CONCURRENCIES", "1,8,64,2
 GEN_BUDGET_PER_CELL = int(os.environ.get("BENCH_CELL_BUDGET", str(32 * 1024)))
 OUTPUT_TOKENS_MIN = int(os.environ.get("BENCH_OUT_MIN", "64"))
 OUTPUT_TOKENS_MAX = int(os.environ.get("BENCH_OUT_MAX", "512"))
+REQ_TIMEOUT_S = float(os.environ.get("BENCH_REQ_TIMEOUT_S", "1200"))
 
 # Middle of every relevant vocab (Qwen ~151k, gemma 262k, o200k ~201k),
 # dodging specials/reserved IDs. A small range is fine — vLLM still attends
@@ -92,7 +94,7 @@ def one(prompt_ids, output_tokens):
         headers["Authorization"] = f"Bearer {API_KEY}"
     req = urllib.request.Request(URL, data=body, headers=headers)
     t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=1200) as r:
+    with urllib.request.urlopen(req, timeout=REQ_TIMEOUT_S) as r:
         data = json.loads(r.read())
     dt = time.perf_counter() - t0
     u = data["usage"]

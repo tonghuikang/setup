@@ -73,43 +73,53 @@ vs the 2026-04-25 baseline on 26.03.post1 (git history): single-stream 54
 vs 48; N=256/prefix-1 4452 vs 2332 — vLLM 0.22 is a real speedup (different
 KV budgets, so not a perfectly controlled comparison).
 
-### Qwen/Qwen3.6-27B-FP8 (partial — slow dense model)
+### Qwen/Qwen3.6-27B-FP8
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 7.9 | 60 | 286 | 386 | – |
-| 4096 | 7.6 | 46 | 98 | – | – |
-| 32768 | – | – | – | – | – |
+| 1 | 9 | 65 | 299 | 487 | 0.12 |
+| 4096 | 8 | 49 | 103 | 35 | 2.03 |
+| 32768 | 6 | 16 | 13 | – | 18.77 |
 
 ~8 tok/s single-stream is bandwidth math: ~29 GB of dense weights per token
-on a ~273 GB/s box.
+on a ~273 GB/s box. Long-prefix + high-N cells collapse under KV-cache
+preemption: (32768, 64) processed 2.1M prompt tokens (every request
+re-prefilled) and took 42 min for 12.9 tok/s. The (32768, 256) cell
+exceeded a 1-hour per-request timeout on the first attempt; rerun pending
+with a 4-hour timeout.
 
-### nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 (partial)
+### nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 28 | 143 | 523 | – | – |
-| 4096 | 27 | 122 | 188 | – | – |
-| 32768 | 19 | 35 | 35 | – | – |
+| 1 | 29 | 123 | 559 | 707 | 0.04 |
+| 4096 | 27 | 124 | 191 | 99 | 0.99 |
+| 32768 | 19 | 35 | 36 | 13 | 8.64 |
+
+Same long-prefix inversion as the Qwen MoEs: (32768, 256) collapsed to
+13 tok/s under KV preemption (8.4M prompt tokens re-prefilled, 42 min).
+Saturates around N=64 for long-context work.
 
 ### Qwen/Qwen3.6-35B-A3B-FP8
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 53 | 271 | 913 | 794 | – |
-| 4096 | 49 | 127 | 241 | 93 | – |
-| 32768 | 29 | 45 | 30 | – | – |
+| 1 | 54 | 252 | 911 | 804 | 0.02 |
+| 4096 | 50 | 128 | 242 | 94 | 0.68 |
+| 32768 | 29 | 45 | 31 | 14 | 6.49 |
 
 Inversions at high N with long prefixes = KV-cache pressure → preemption;
-for long-context work this model saturates around N=64 on this box.
+for long-context work this model saturates around N=64 on this box. The
+(32768, 256) cell re-prefilled 8.4M prompt tokens and took 38 min for
+14 tok/s.
 
 ### google/gemma-4-26B-A4B-it
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 24 | 178 | 1119 | 3320 | – |
-| 4096 | 22 | 187 | 817 | 1411 | – |
-| 32768 | 15 | 118 | 486 | 638 | – |
+| 1 | 25 | 169 | 1142 | 3284 | 0.04 |
+| 4096 | 24 | 194 | 846 | 1409 | 0.90 |
+| 32768 | 15 | 120 | 491 | 630 | 11.14 |
 
 Best long-context scaling of the big models (sliding-window attention).
 
@@ -124,41 +134,44 @@ Best long-context scaling of the big models (sliding-window attention).
 FP8 variant is ~1.8× faster single-stream (53 vs 30) — bandwidth-bound, so
 prefer FP8 in practice.
 
-### google/gemma-4-31B-it (resharded, partial)
+### google/gemma-4-31B-it (resharded)
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 4 | 28 | 152 | – | – |
-| 4096 | 4 | 26 | 116 | – | – |
-| 32768 | 3 | 19 | 68 | – | – |
+| 1 | 4 | 30 | 124 | 399 | 0.26 |
+| 4096 | 4 | 28 | 86 | 169 | 4.21 |
+| 32768 | 3 | 20 | 45 | 60 | 50.08 |
 
 Slowest of the fleet, as bandwidth math predicts: ~62 GB of dense BF16
 weights per token. Usable interactively only at low concurrency; the
 QAT w4a16 variant would be ~4× faster if 31B quality is ever needed at
 speed.
 
-### Qwen/Qwen2.5-0.5B-Instruct (not yet benchmarked)
+### Qwen/Qwen2.5-0.5B-Instruct
 
-First attempt used 36 000 ctx > its 32 768 native; the requeue was cancelled
-when the machine had to shut down. Note its native ctx can't fit the
-32 768-prefix row at all.
+Run 2026-07-04 at `--max-model-len 32768` (its native ctx — the
+32 768-prefix row can't fit and is n/a).
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | – | – | – | – | – |
-| 4096 | – | – | – | – | – |
+| 1 | 180 | 1543 | 6464 | 10390 | 0.01 |
+| 4096 | 170 | 1397 | 4574 | 6161 | 0.08 |
 | 32768 | n/a | n/a | n/a | n/a | n/a |
 
-### openai/gpt-oss-120b (not yet benchmarked)
+### openai/gpt-oss-120b
 
-Queue stopped at user request before its slot; must run on
-`26.03.post1-py3` at `--gpu-memory-utilization 0.60` ([README](./README.md#container-images)).
+Run 2026-07-04 on `26.03.post1-py3` at `--gpu-memory-utilization 0.60`
+(only image that can serve it, [README](./README.md#container-images)).
 
 | prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | – | – | – | – | – |
-| 4096 | – | – | – | – | – |
-| 32768 | – | – | – | – | – |
+| 1 | 35 | 225 | 550 | 2861 | 0.03 |
+| 4096 | 32 | 138 | 711 | 2155 | 1.00 |
+| 32768 | 17 | 111 | 404 | 459 | 13.36 |
+
+Remarkably robust at long context + high concurrency for its size (MoE +
+MXFP4: only ~5.1B active params/token; attention sinks keep KV cost low) —
+the (32768, 256) cell ran at 459 tok/s where 27B-FP8 timed out outright.
 
 ### google/gemma-4-12B-it (cannot serve)
 

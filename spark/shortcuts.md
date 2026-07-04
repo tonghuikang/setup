@@ -1,5 +1,11 @@
 # GNOME Terminal Shortcuts
 
+> **Mac-style ⌘ shortcuts:** Toshy is installed (2026-07-03), so on the
+> Magic Keyboard `⌘+C` / `⌘+V` / `⌘+T` / `⌘+W` are rewritten to the
+> `Ctrl+Shift+…` terminal shortcuts below, and `⌘+.` sends `Ctrl+C`
+> (SIGINT). Physical `Ctrl+C` still interrupts as normal. Details in
+> [`toshy.md`](./toshy.md).
+
 ## Tabs
 
 | Action | Shortcut |

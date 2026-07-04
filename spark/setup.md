@@ -99,15 +99,23 @@ that purely in-terminal.
 The right approach if you want full macOS-style keybindings (Cmd+C copies
 in terminals AND Ctrl+C still sends SIGINT) is a per-app keymap layer
 that watches the focused window class and rewrites events accordingly.
-The two well-known options:
 
-- **Toshy** — <https://github.com/RedBearAK/toshy>. Actively maintained,
-  X11 + Wayland (KDE), auto-detects Apple keyboards, ships per-app
-  layers including a "terminals" group.
-- **Kinto** — <https://kinto.sh/>. The original; X11-focused.
+#### Toshy (installed 2026-07-03)
 
-Neither is installed yet on this box. Install one of them *instead of*
-the kernel-level swap if you want the macOS workflow.
+**Toshy** — <https://github.com/RedBearAK/toshy> — is installed and provides
+exactly that layer. (The alternative, Kinto — <https://kinto.sh/> — is the
+older X11-focused original by the same keymap author; not used here.)
+
+Net effect: `⌘+C` / `⌘+V` copy/paste everywhere — translated to
+`Ctrl+C`/`Ctrl+V` in GUI apps and `Ctrl+Shift+C`/`Ctrl+Shift+V` in
+terminals — while plain `Ctrl+C` on the physical Control key still sends
+SIGINT. Cmd and Control stay distinct keys, which is why this beats the
+`hid_apple swap_ctrl_cmd` kernel swap.
+
+Full documentation — install method and vetting, how the evdev
+grab/virtual-keyboard pipeline works, the complete keymap table, service
+management, config customization, and debugging (including the known
+copy-out-of-Claude-Code caveat) — lives in [`toshy.md`](./toshy.md).
 
 #### Caps Lock → Escape
 
