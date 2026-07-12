@@ -205,10 +205,25 @@ Remarkably robust at long context + high concurrency for its size (MoE +
 MXFP4: only ~5.1B active params/token; attention sinks keep KV cost low) —
 the (32768, 256) cell ran at 459 tok/s where 27B-FP8 timed out outright.
 
-### google/gemma-4-12B-it (cannot serve)
+### google/gemma-4-12B-it (one-off backport run, TRITON_ATTN)
 
-Architecture `gemma4_unified` is unsupported by vLLM 0.22.1
-([README](./README.md#models-on-this-box)); no benchmark possible until a newer NGC image.
+Not servable with any shipped image: its `gemma4_unified` arch needs
+vLLM ≥ 0.23.0, and no NGC container carries that yet (checked 2026-07-12).
+Measured 2026-07-12 with the same grid and settings via a temporary,
+since-removed image (vLLM v0.23.0's `gemma4_unified.py` + a registry entry
+dropped onto `vllm-fixed:26.06-tf`), served with
+`--attention-backend TRITON_ATTN` because the default FlashInfer backend
+crashes on this model. Triton attention is slower than FlashInfer, especially
+at low concurrency, so don't read cross-model conclusions out of this table;
+re-bench natively once an NGC image ships vLLM ≥ 0.23.0.
+
+Load: 4 m 31 s.
+
+| prefix \ N | 1 | 8 | 64 | 256 | prefill (s) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 8 | 71 | 420 | 1338 | 0.13 |
+| 4096 | 7 | 66 | 346 | 676 | 1.72 |
+| 32768 | 5 | 47 | 230 | 360 | 20.58 |
 
 ## Re-running
 

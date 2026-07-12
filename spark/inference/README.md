@@ -9,7 +9,7 @@ start/stop, auth, querying, switching models, teardown) and
 [benchmarks.md](./benchmarks.md) (throughput + prefill results).
 Scripts: [serve-vllm.sh](./serve-vllm.sh) (run the service's docker
 invocation in the foreground), [bench_vllm.py](./bench_vllm.py) (benchmark
-harness), [bench-results/](./bench-results/) (raw outputs, 2026-07-03).
+harness), [bench-results/](./bench-results/) (raw outputs).
 
 ## Architecture
 
@@ -50,9 +50,11 @@ Images on disk (as of 2026-07-03):
 | `nvcr.io/nvidia/vllm:26.06-py3` | 0.22.1 | **broken as shipped**: pins instrumentator 8.0.0, which 500s every HTTP request under its FastAPI (`'_IncludedRouter' object has no attribute 'path'`). Engine loads fine, so logs look healthy while serving nothing |
 | `nvcr.io/nvidia/vllm:26.03.post1-py3` | 0.17.1 | previous production image; keep — `gpt-oss-120b` only serves on this one (26.06's MXFP4 MoE prep OOMs the host, see Failure modes) |
 
-When a newer NGC tag ships, re-test before switching: check the
-instrumentator bug is fixed, and re-try `google/gemma-4-12B-it`
-(`gemma4_unified` arch, unsupported by vLLM 0.22.1).
+When a newer NGC tag ships (checked 2026-07-12: 26.06 still newest), re-test
+before switching: check the instrumentator bug is fixed, and if it carries
+vLLM ≥ 0.23.0, serve `google/gemma-4-12B-it` (its `gemma4_unified` arch is
+supported upstream since vLLM v0.23.0, 2026-06-15 — NVIDIA just hasn't
+shipped a container with it yet).
 
 The `vllm-fixed` images were built with:
 
@@ -76,7 +78,7 @@ Serve-tested 2026-07-03, one at a time, `vllm-fixed:26.06` unless noted
 | --- | --- | --- |
 | `google/gemma-4-E2B-it` | ✅ | `~/.cache/huggingface` store |
 | `google/gemma-4-E4B-it` | ✅ | |
-| `google/gemma-4-12B-it` | ❌ | arch `gemma4_unified` unknown to vLLM 0.22.1; transformers-fallback also fails (shape mismatch). Re-check next NGC tag |
+| `google/gemma-4-12B-it` | ⏳ | arch `gemma4_unified` needs vLLM ≥ 0.23.0; no NGC container ships that yet (checked 2026-07-12). Verified working 2026-07-12 via a temporary backport of the v0.23.0 model file onto `26.06-tf` (required `--attention-backend TRITON_ATTN`; benchmarked, see [benchmarks.md](./benchmarks.md)), since removed — wait for the next NGC tag |
 | `google/gemma-4-26B-A4B-it` | ✅ | MoE |
 | `google/gemma-4-31B-it` | ✅* | only via resharded copy `~/.cache/huggingface/gemma-4-31B-it-resharded` (31×2 GB shards), `--gpu-memory-utilization ≥0.60`. Original 47 GB shard file hard-crashes the box (see Failure modes) |
 | `Qwen/Qwen3.6-27B-FP8` | ✅ | thinking model |
@@ -110,6 +112,13 @@ and any apps you're running. Throughput per model:
   any checkpoint whose largest file exceeds ~10 GB, and for a first-time
   load of a big model run a watchdog that kills the container if host
   MemAvailable drops below ~4 GB.
+- EngineCore dies during startup KV-cache profiling with
+  `RuntimeError: … 'BatchPrefillWithPagedKVCacheDispatched' … Unsupported
+  max_mma_kv: 0` → FlashInfer (the default attention backend) can't handle
+  the model; add `--attention-backend TRITON_ATTN`. Seen 2026-07-12 running
+  gemma-4-12B-it via a v0.23.0 model-file backport on 26.06. Note
+  `VLLM_ATTENTION_BACKEND` is ignored by this build — only the CLI flag
+  works.
 - Container crashes immediately with `CUDA error: no kernel image …` →
   the image tag isn't sm_121-aware. Verify the unit runs an NGC/sm_121
   image (see Container images above), not `vllm/vllm-openai`.
